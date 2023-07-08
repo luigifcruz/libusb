@@ -598,27 +598,146 @@ int em_handle_transfer_completion(usbi_transfer *itransfer) {
 }
 }  // namespace
 
+#include <iostream>
+#include <thread>
+#include <emscripten/proxying.h>
+#include <emscripten/eventloop.h>
+
+static _Atomic bool em_proxy_started = false;
+
+static ProxyingQueue queue;
+static std::thread::id em_proxy_thread_id;
+static std::thread::native_handle_type em_proxy_thread_handle;
+
+void em_proxy_init() {
+  if (em_proxy_started) {
+    return;
+  }
+
+  em_proxy_started = true;
+  em_proxy_thread_id = std::this_thread::get_id();
+  em_proxy_thread_handle = *reinterpret_cast<std::thread::native_handle_type*>(&em_proxy_thread_id);
+}
+
+void em_proxy_close() {
+  if (!em_proxy_started) {
+    return;
+  }
+  em_proxy_started = false;
+}
+
+#define EM_PROXY(func, ...) if (em_proxy_thread_id != std::this_thread::get_id()) { queue.proxySync(em_proxy_thread_handle, [&]() { func(__VA_ARGS__); }); } else { return func(__VA_ARGS__); }
+#define EM_PROXY_INT(func, ...) if (em_proxy_thread_id != std::this_thread::get_id()) { int res = 0; queue.proxySync(em_proxy_thread_handle, [&]() { res = func(__VA_ARGS__); }); return res; } else { return func(__VA_ARGS__); }
+
+int em_proxy_get_device_list(libusb_context *ctx, discovered_devs **devs) {
+  em_proxy_init();
+
+  EM_PROXY_INT(em_get_device_list, ctx, devs);
+}
+
+int em_proxy_open(libusb_device_handle *handle) {
+  em_proxy_init();
+
+  EM_PROXY_INT(em_open, handle);
+}
+
+void em_proxy_close(libusb_device_handle *handle) {
+  em_proxy_close();
+  
+  EM_PROXY(em_close, handle);
+}
+
+int em_proxy_get_active_config_descriptor(libusb_device *dev, void *buf, size_t len) {
+  std::cout << "em_get_active_config_descriptor" << std::endl;
+  EM_PROXY_INT(em_get_active_config_descriptor, dev, buf, len);
+}
+
+int em_proxy_get_config_descriptor(libusb_device *dev, uint8_t idx, void *buf, size_t len) {
+  std::cout << "em_get_config_descriptor" << std::endl;
+  EM_PROXY_INT(em_get_config_descriptor, dev, idx, buf, len);
+}
+
+int em_proxy_get_configuration(libusb_device_handle *dev_handle, uint8_t *config) {
+  std::cout << "em_get_configuration" << std::endl;
+  EM_PROXY_INT(em_get_configuration, dev_handle, config);
+}
+
+int em_proxy_set_configuration(libusb_device_handle *handle, int config) {
+  std::cout << "em_set_configuration" << std::endl;
+  EM_PROXY_INT(em_set_configuration, handle, config);
+}
+
+int em_proxy_claim_interface(libusb_device_handle *handle, uint8_t iface) {
+  std::cout << "em_claim_interface" << std::endl;
+  EM_PROXY_INT(em_claim_interface, handle, iface);
+}
+
+int em_proxy_release_interface(libusb_device_handle *handle, uint8_t iface) {
+  std::cout << "em_release_interface" << std::endl;
+  EM_PROXY_INT(em_release_interface, handle, iface);
+}
+
+int em_proxy_set_interface_altsetting(libusb_device_handle *handle, uint8_t iface, uint8_t altsetting) {
+  std::cout << "em_set_interface_altsetting" << std::endl;
+  EM_PROXY_INT(em_set_interface_altsetting, handle, iface, altsetting);
+}
+
+int em_proxy_clear_halt(libusb_device_handle *handle, unsigned char endpoint) {
+  std::cout << "em_clear_halt" << std::endl;
+  EM_PROXY_INT(em_clear_halt, handle, endpoint);
+}
+
+int em_proxy_reset_device(libusb_device_handle *handle) {
+  std::cout << "em_reset_device" << std::endl;
+  EM_PROXY_INT(em_reset_device, handle);
+}
+
+void em_proxy_destroy_device(libusb_device *dev) {
+  std::cout << "em_destroy_device" << std::endl;
+  EM_PROXY(em_destroy_device, dev);
+}
+
+int em_proxy_submit_transfer(usbi_transfer *itransfer) {
+  std::cout << "em_submit_transfer" << std::endl;
+  EM_PROXY_INT(em_submit_transfer, itransfer);
+}
+
+int em_proxy_cancel_transfer(usbi_transfer *itransfer) {
+  std::cout << "em_cancel_transfer" << std::endl;
+  EM_PROXY_INT(em_cancel_transfer, itransfer);
+}
+
+void em_proxy_clear_transfer_priv(usbi_transfer *itransfer) {
+  std::cout << "em_clear_transfer_priv" << std::endl;
+  EM_PROXY(em_clear_transfer_priv, itransfer);
+}
+
+int em_proxy_handle_transfer_completion(usbi_transfer *itransfer) {
+  std::cout << "em_handle_transfer_completion" << std::endl;
+  EM_PROXY_INT(em_handle_transfer_completion, itransfer);
+}
+
 extern "C" {
 const usbi_os_backend usbi_backend = {
     .name = "Emscripten + WebUSB backend",
     .caps = LIBUSB_CAP_HAS_CAPABILITY,
-    .get_device_list = em_get_device_list,
-    .open = em_open,
-    .close = em_close,
-    .get_active_config_descriptor = em_get_active_config_descriptor,
-    .get_config_descriptor = em_get_config_descriptor,
-    .get_configuration = em_get_configuration,
-    .set_configuration = em_set_configuration,
-    .claim_interface = em_claim_interface,
-    .release_interface = em_release_interface,
-    .set_interface_altsetting = em_set_interface_altsetting,
-    .clear_halt = em_clear_halt,
-    .reset_device = em_reset_device,
-    .destroy_device = em_destroy_device,
-    .submit_transfer = em_submit_transfer,
-    .cancel_transfer = em_cancel_transfer,
-    .clear_transfer_priv = em_clear_transfer_priv,
-    .handle_transfer_completion = em_handle_transfer_completion,
+    .get_device_list = em_proxy_get_device_list,
+    .open = em_proxy_open,
+    .close = em_proxy_close,
+    .get_active_config_descriptor = em_proxy_get_active_config_descriptor,
+    .get_config_descriptor = em_proxy_get_config_descriptor,
+    .get_configuration = em_proxy_get_configuration,
+    .set_configuration = em_proxy_set_configuration,
+    .claim_interface = em_proxy_claim_interface,
+    .release_interface = em_proxy_release_interface,
+    .set_interface_altsetting = em_proxy_set_interface_altsetting,
+    .clear_halt = em_proxy_clear_halt,
+    .reset_device = em_proxy_reset_device,
+    .destroy_device = em_proxy_destroy_device,
+    .submit_transfer = em_proxy_submit_transfer,
+    .cancel_transfer = em_proxy_cancel_transfer,
+    .clear_transfer_priv = em_proxy_clear_transfer_priv,
+    .handle_transfer_completion = em_proxy_handle_transfer_completion,
     .device_priv_size = sizeof(val),
     .transfer_priv_size = sizeof(val),
 };
